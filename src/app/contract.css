@@ -1,0 +1,81 @@
+/* 合同编辑器基础样式 */
+.ProseMirror {
+  font-family: 'SimSun', serif;
+  line-height: 1.8;
+}
+
+.ProseMirror:focus {
+  outline: none;
+}
+
+/* 合同预览样式 */
+.contract-preview {
+  background-color: white;
+  color: black;
+  padding: 2rem;
+  min-height: 100%;
+}
+
+.contract-preview .content {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* 标题样式 */
+.contract h1 {
+  font-size: 24px;
+  font-weight: bold;
+  text-align: center;
+  margin: 2rem 0;
+}
+
+.contract h2 {
+  font-size: 18px;
+  font-weight: bold;
+  margin: 1.5rem 0 1rem;
+}
+
+/* 段落样式 */
+.contract p {
+  margin: 0.75rem 0;
+  text-indent: 2em;
+  line-height: 1.8;
+}
+
+/* 列表样式 */
+.contract ul,
+.contract ol {
+  margin: 0.75rem 0;
+  padding-left: 2.5em;
+}
+
+.contract li {
+  margin: 0.5rem 0;
+}
+
+/* 打印样式 */
+@media print {
+  .contract-for-export {
+    font-family: 'SimSun', serif;
+    padding: 40px;
+    max-width: 800px;
+    margin: 0 auto;
+    line-height: 1.8;
+  }
+
+  .contract-for-export h1 {
+    font-size: 24pt;
+    text-align: center;
+    margin: 2em 0;
+  }
+
+  .contract-for-export h2 {
+    font-size: 14pt;
+    margin: 1.5em 0 1em;
+  }
+
+  .contract-for-export p {
+    text-indent: 2em;
+    margin: 0.75em 0;
+  }
+}

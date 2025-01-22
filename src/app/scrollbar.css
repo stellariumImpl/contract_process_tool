@@ -1,0 +1,20 @@
+/* 自定义滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgb(17 24 39);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(23 104 61);
+  border-radius: 3px;
+  transition: all 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(29 185 84);
+}
