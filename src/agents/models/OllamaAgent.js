@@ -5,22 +5,26 @@ export class OllamaAgent extends ContractAgent {
   constructor({ modelName }) {
     super({ modelName });
     this.modelName = modelName;
-    this.baseUrl = 'http://localhost:11434/api';
+    this.baseUrl = 'http://localhost:11434';
   }
 
   async initialize() {
     try {
-      // 验证模型是否可用
-      const response = await fetch(`${this.baseUrl}/tags`);
-      const data = await response.json();
-      
-      const isAvailable = data.models?.some(model => model.name === this.modelName);
-      if (!isAvailable) {
-        throw new Error(`Model ${this.modelName} is not available`);
+      // 1. 检查服务是否可用
+      const response = await fetch(`${this.baseUrl}/api/tags`);
+      if (!response.ok) {
+        throw new Error('Ollama 服务未响应');
       }
 
-      // 测试模型是否可以正常响应
-      const testResponse = await fetch(`${this.baseUrl}/generate`, {
+      // 2. 验证模型是否可用
+      const data = await response.json();
+      const isAvailable = data.models?.some(model => model.name === this.modelName);
+      if (!isAvailable) {
+        throw new Error(`模型 ${this.modelName} 未安装`);
+      }
+
+      // 3. 测试模型响应
+      const testResponse = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -33,115 +37,64 @@ export class OllamaAgent extends ContractAgent {
       });
 
       if (!testResponse.ok) {
-        throw new Error('Failed to initialize model');
+        throw new Error('模型测试失败');
       }
 
       return true;
     } catch (error) {
-      console.error('Failed to initialize OllamaAgent:', error);
+      console.error('OllamaAgent 初始化失败:', error);
       throw error;
     }
   }
 
   async processFile(file) {
     try {
-      // 1. 读取并解析表格内容
-      const tableData = await this._readFileContent(file);
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       
-      // 2. 使用 LLM 解析表格数据为结构化信息
-      const structuredData = await this._parseTableData(tableData);
-      
-      // 3. 基于模板和结构化数据生成合同
-      const contract = await this._generateContractFromTemplate(structuredData);
-      
+      // 使用更可靠的选项来转换数据
+      const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+        raw: false, // 返回格式化的字符串
+        defval: '', // 空单元格的默认值
+        header: 1, // 使用数组格式而不是对象
+        blankrows: false // 跳过空行
+      });
+
+      // 过滤和清理数据
+      const cleanData = jsonData
+        .filter(row => row.some(cell => cell !== '')) // 移除完全空的行
+        .map(row => row.map(cell => 
+          typeof cell === 'string' ? cell.trim() : cell
+        ));
+
       return {
         success: true,
-        contract: contract
+        data: cleanData
       };
     } catch (error) {
-      console.error('Error processing file:', error);
+      console.error('处理文件失败:', error);
       return {
         success: false,
-        error: error.message || 'Failed to process file'
+        error: '文件处理失败，请确保文件格式正确'
       };
     }
   }
 
-  async _parseTableData(tableContent) {
-    const parsePrompt = `
-你是一个专业的采购合同分析助手。请分析以下采购订单表格内容，提取关键信息并按以下格式返回（请确保返回的是合法的 JSON 格式）：
-
-{
-  "基本信息": {
-    "合同编号": "",
-    "签订日期": "",
-    "交付期限": ""
-  },
-  "供应商信息": {
-    "供应商名称": "",
-    "供应商地址": "",
-    "联系人": ""
-  },
-  "采购物品信息": {
-    "物品名称": "",
-    "规格型号": "",
-    "数量": 0,
-    "单价": "",
-    "总金额": ""
-  },
-  "付款信息": {
-    "付款方式": "",
-    "付款条件": "",
-    "付款周期": ""
-  }
-}
-
-请仔细分析以下表格内容，将信息填入上述结构中（注意保持 JSON 格式的正确性）：
-
-${tableContent}`;
-
+  async _parseTableData(data) {
     try {
-      const response = await fetch(`${this.baseUrl}/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.modelName,
-          prompt: parsePrompt,
-          stream: false,
-          options: {
-            temperature: 0.1, // 降低温度以获得更确定的输出
-            top_p: 0.9,
-          }
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to parse table data');
-      }
-
-      const result = await response.json();
+      // 确保数据是字符串
+      const jsonString = typeof data === 'string' ? data : JSON.stringify(data);
       
-      // 尝试从响应中提取 JSON
-      const jsonMatch = result.response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No valid JSON found in response');
-      }
+      // 清理可能导致 JSON 解析错误的字符
+      const cleanedString = jsonString
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // 移除控制字符
+        .replace(/\n\s*\n/g, '\n') // 移除多余的空行
+        .trim();
 
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch (parseError) {
-        console.error('JSON parse error:', parseError);
-        // 如果解析失败，返回一个基本结构
-        return {
-          基本信息: {},
-          供应商信息: {},
-          采购物品信息: {},
-          付款信息: {}
-        };
-      }
+      return JSON.parse(cleanedString);
     } catch (error) {
-      console.error('Error in _parseTableData:', error);
-      throw error;
+      console.error('解析表格数据失败:', error);
+      throw new Error('表格数据格式不正确');
     }
   }
 
@@ -171,7 +124,7 @@ ${JSON.stringify(structuredData, null, 2)}
 
 请生成完整的合同文本：`;
 
-    const response = await fetch(`${this.baseUrl}/generate`, {
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -207,11 +160,22 @@ ${JSON.stringify(structuredData, null, 2)}
           3. 确保条款完整性
           4. 改进格式和结构
         `;
+      } else if (type === 'generate') {
+        prompt = `
+          请基于以下表格数据生成一份完整的采购合同。
+          表格数据：${content}
+          
+          要求：
+          1. 生成规范的合同格式
+          2. 包含所有必要的合同条款
+          3. 使用专业的法律语言
+          4. 确保数据准确转换为合同条款
+        `;
       } else {
         prompt = `请根据以下内容生成一份合同：${content}`;
       }
 
-      const response = await fetch(`${this.baseUrl}/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -244,7 +208,7 @@ ${JSON.stringify(structuredData, null, 2)}
 合同文本：
 ${contractContent}`;
 
-    const response = await fetch(`${this.baseUrl}/generate`, {
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -331,7 +295,7 @@ ${contractContent}`;
         请提供修改后的完整合同内容。
       `;
 
-      const response = await fetch(`${this.baseUrl}/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -377,7 +341,7 @@ ${contractContent}`;
         请提供详细的分析报告。
       `;
 
-      const response = await fetch(`${this.baseUrl}/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -413,7 +377,7 @@ ${contractContent}`;
         请提供专业、准确的回答。
       `;
 
-      const response = await fetch(`${this.baseUrl}/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

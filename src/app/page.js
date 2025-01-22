@@ -14,7 +14,6 @@ import { AIAssistant } from '@/components/AIAssistant';
 
 // 初始化 Agent 管理器
 const agentManager = new AgentManager();
-agentManager.registerAgent('qwen:7b', new OllamaAgent({ modelName: 'qwen:7b' }));
 
 export default function Home() {
   const [selectedModel, setSelectedModel] = useState('qwen:7b');
@@ -31,89 +30,78 @@ export default function Home() {
   const initializeModel = async () => {
     try {
       setModelStatus('checking');
-      
-      // 1. 检查 Ollama 服务是否在运行
-      const response = await fetch('http://localhost:11434/api/tags');
-      const data = await response.json();
-      
-      // 2. 检查模型是否已安装
-      const isInstalled = data.models?.some(model => model.name === 'qwen:7b');
-      if (!isInstalled) {
-        setModelStatus('not-installed');
-        setError('请先安装 qwen:7b 模型。在命令行中运行: ollama pull qwen:7b');
-        return;
-      }
-
-      // 3. 初始化模型
-      await agentManager.setModel(selectedModel);
-      const currentModel = agentManager.getCurrentModel();
-      
-      if (!currentModel) {
-        setModelStatus('error');
-        setError('模型初始化失败，请刷新页面重试');
-        return;
-      }
-
-      setModelStatus('installed');
       setError(null);
-      console.log('模型初始化成功:', currentModel.modelName);
+
+      // 注册模型（确保只注册一次）
+      if (!agentManager.agents.has('qwen:7b')) {
+        agentManager.registerAgent('qwen:7b', new OllamaAgent({ modelName: 'qwen:7b' }));
+      }
+
+      // 设置当前模型
+      await agentManager.setModel('qwen:7b');
+      setModelStatus('installed');
       
     } catch (error) {
       console.error('初始化模型失败:', error);
       setModelStatus('error');
-      setError('模型加载失败，请检查 Ollama 服务是否正常运行，然后刷新页面重试');
+      setError(error.message || '模型加载失败，请检查 Ollama 服务是否正常运行');
     }
   };
 
-  // 在组件加载和模型切换时初始化
+  // 在组件加载时初始化
   useEffect(() => {
     initializeModel();
+  }, []);
+
+  // 在模型切换时重新初始化
+  useEffect(() => {
+    if (selectedModel) {
+      initializeModel();
+    }
   }, [selectedModel]);
 
   const handleFileUpload = async (file) => {
     try {
+      // 确保模型已初始化
       if (modelStatus !== 'installed') {
-        throw new Error(
-          modelStatus === 'not-installed' 
-            ? '请先安装模型，在命令行运行: ollama pull qwen:7b' 
-            : '模型未正确加载，请刷新页面重试'
-        );
+        await initializeModel();
       }
 
       setIsProcessing(true);
-      console.log('开始处理文件:', file.name);
+      setError(null);
 
       const currentModel = agentManager.getCurrentModel();
       if (!currentModel) {
-        throw new Error('未选择模型或模型未正确初始化');
+        throw new Error('模型未正确初始化');
       }
+
+      const result = await currentModel.processFile(file);
       
-      console.log('当前使用的模型:', currentModel.modelName);
-
-      // 确保模型已经设置
-      await agentManager.setModel(selectedModel);
-      
-      const result = await agentManager.processFile(file);
-      
-      if (!result) {
-        throw new Error('文件处理返回结果为空');
+      if (!result?.success) {
+        throw new Error(result?.error || '文件处理失败');
       }
 
-      if (!result.success) {
-        throw new Error(result.error || '处理文件失败');
+      // 使用处理后的数据生成合同内容
+      const contractResult = await currentModel.generateContract({
+        type: 'generate',
+        content: JSON.stringify(result.data)
+      });
+
+      if (!contractResult) {
+        throw new Error('生成合同内容失败');
       }
 
-      if (!result.contract) {
-        throw new Error('处理结果中缺少合同内容');
-      }
-
-      console.log('处理结果:', result);
-      setContractContent(result.contract);
-      setCurrentContent(result.contract);
+      setContractContent(contractResult);
+      setCurrentContent(contractResult);
+      return { success: true };
 
     } catch (error) {
       console.error('处理文件时出错:', error);
       setError(error.message);
+      return { 
+        success: false, 
+        error: error.message 
+      };
     } finally {
       setIsProcessing(false);
     }
@@ -246,6 +234,7 @@ export default function Home() {
             <FileUpload
               onFileUpload={handleFileUpload}
               isProcessing={isProcessing}
+              onShowToast={(message, type) => setToast({ message, type })}
             />
             <div className="sticky top-20">
               <AIAssistant
@@ -254,6 +243,7 @@ export default function Home() {
                 contractContent={currentContent}
                 onContractUpdate={handleContractUpdate}
                 agentManager={agentManager}
+                onShowToast={(message, type) => setToast({ message, type })}
               />
             </div>
           </div>

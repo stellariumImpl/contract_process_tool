@@ -7,27 +7,31 @@ export class AgentManager {
     this.tableAgent = new TableProcessingAgent({});
   }
 
-  registerAgent(modelName, agent) {
-    this.agents.set(modelName, agent);
+  registerAgent(name, agent) {
+    this.agents.set(name, agent);
   }
 
   async setModel(modelName) {
-    const agent = this.agents.get(modelName);
-    if (!agent) {
-      throw new Error(`Model ${modelName} not found`);
-    }
-    
     try {
+      const agent = this.agents.get(modelName);
+      if (!agent) {
+        throw new Error(`未找到模型: ${modelName}`);
+      }
+
+      // 初始化新模型
       await agent.initialize();
       this.currentModel = agent;
       return true;
     } catch (error) {
-      console.error('Failed to initialize model:', error);
+      console.error('设置模型失败:', error);
       throw error;
     }
   }
 
   getCurrentModel() {
+    if (!this.currentModel) {
+      throw new Error('未选择模型');
+    }
     return this.currentModel;
   }
 

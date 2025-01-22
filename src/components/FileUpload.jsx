@@ -5,60 +5,52 @@ import { Upload, FileText, Check, AlertCircle, Eye } from 'lucide-react';
 import { TableEditor } from './TableEditor';
 import { read, utils } from 'xlsx';
 
-export const FileUpload = ({ onFileUpload, isProcessing }) => {
+export const FileUpload = ({ onFileUpload, isProcessing, onShowToast }) => {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [tableData, setTableData] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const validateFile = (file) => {
-    // 检查文件扩展名而不是 MIME 类型
-    const allowedExtensions = ['.xlsx', '.xls', '.csv'];
-    const fileExtension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0];
-    
-    if (!fileExtension || !allowedExtensions.includes(fileExtension)) {
-      throw new Error('文件类型不支持，请上传 .xlsx, .xls 或 .csv 文件');
-    }
-
-    // 检查文件大小 (例如限制为10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      throw new Error('文件大小不能超过10MB');
-    }
-  };
-
-  const handleFileChange = async (e) => {
-    const selectedFile = e.target.files?.[0];
+  const handleFileChange = async (event) => {
+    const selectedFile = event.target.files?.[0];
     if (!selectedFile) return;
 
     try {
-      validateFile(selectedFile);
-      
-      setFile(selectedFile);
+      setIsUploading(true);
       setStatus('loading');
-      setErrorMessage('');
-      
-      const content = await readExcelContent(selectedFile);
-      
-      // 检查数据是否有效
-      if (!content || !content.length || !content[0].length) {
-        throw new Error('无法读取文件内容，请检查文件格式是否正确');
+      setFile(selectedFile);
+
+      // 验证文件类型
+      const fileExtension = selectedFile.name.toLowerCase().match(/\.[^.]+$/)?.[0];
+      if (!fileExtension || !['.xlsx', '.xls', '.csv'].includes(fileExtension)) {
+        throw new Error('请上传 Excel (.xlsx, .xls) 或 CSV 文件');
       }
 
-      console.log('Parsed content:', content); // 调试用
-      setTableData(content);
-      
-      if (onFileUpload) {
-        await onFileUpload(selectedFile);
-        setStatus('success');
+      // 验证文件大小（5MB）
+      if (selectedFile.size > 5 * 1024 * 1024) {
+        throw new Error('文件大小不能超过 5MB');
       }
+
+      const result = await onFileUpload(selectedFile);
+      
+      if (!result?.success) {
+        throw new Error(result?.error || '文件处理失败');
+      }
+
+      setStatus('success');
+      onShowToast?.('文件上传成功', 'success');
 
     } catch (error) {
-      console.error('Error:', error);
+      console.error('文件上传失败:', error);
       setStatus('error');
-      setErrorMessage(error.message || '文件处理失败，请重试');
       setFile(null);
+      onShowToast?.(error.message || '文件处理失败，请重试', 'error');
+    } finally {
+      setIsUploading(false);
+      event.target.value = ''; // 重置 input
     }
   };
 
@@ -76,15 +68,10 @@ export const FileUpload = ({ onFileUpload, isProcessing }) => {
   useEffect(() => {
     if (isProcessing) {
       setStatus('loading');
-    }
-  }, [isProcessing]);
-
-  // 监听 isProcessing 的变化
-  useEffect(() => {
-    if (!isProcessing && status === 'loading') {
+    } else if (status === 'loading') {
       setStatus('success');
     }
-  }, [isProcessing]);
+  }, [isProcessing, status]);
 
   return (
     <div className="relative">
@@ -97,7 +84,7 @@ export const FileUpload = ({ onFileUpload, isProcessing }) => {
           onChange={handleFileChange}
           accept=".xlsx,.xls,.csv"
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          id="file-upload"
+          disabled={isUploading || isProcessing}
         />
         <div className="flex flex-col items-center space-y-4">
           <div>
@@ -105,7 +92,7 @@ export const FileUpload = ({ onFileUpload, isProcessing }) => {
               <Check className="w-12 h-12 text-green-500" />
             ) : status === 'error' ? (
               <AlertCircle className="w-12 h-12 text-red-500" />
-            ) : status === 'loading' ? (
+            ) : status === 'loading' || isUploading ? (
               <div className="w-12 h-12 border-4 border-t-[#1DB954] border-r-[#1DB954] border-b-[#1DB954] border-l-transparent rounded-full animate-spin" />
             ) : (
               <Upload className="w-12 h-12 text-[#1DB954]" />
@@ -122,9 +109,6 @@ export const FileUpload = ({ onFileUpload, isProcessing }) => {
                 <p className="font-semibold">点击或拖拽文件到此处上传</p>
                 <p className="text-gray-400">支持 .xlsx, .xls, .csv 格式</p>
               </>
-            )}
-            {status === 'error' && (
-              <p className="text-red-500 mt-2">{errorMessage}</p>
             )}
             {status === 'loading' && (
               <p className="text-gray-500 mt-2">正在处理文件，请稍候...</p>
