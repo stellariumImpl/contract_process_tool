@@ -1,0 +1,51 @@
+/* 自定义 Handsontable 样式 */
+.custom-handsontable .handsontable {
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.custom-handsontable .handsontable th {
+  background-color: #f3f4f6;
+  font-weight: 600;
+  color: #374151;
+  padding: 8px 4px;
+}
+
+.custom-handsontable .handsontable td {
+  padding: 8px 4px;
+  color: #1f2937;
+}
+
+.custom-handsontable .handsontable tr:hover td {
+  background-color: #f9fafb;
+}
+
+.custom-handsontable .handsontable .current {
+  background-color: #e5e7eb !important;
+}
+
+.custom-handsontable .handsontable .area {
+  background-color: #dbeafe !important;
+}
+
+/* 右键菜单样式 */
+.htContextMenu {
+  padding: 4px 0;
+  background: white;
+  border-radius: 6px;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+}
+
+.htContextMenu .ht_master .wtHolder {
+  padding: 0 8px;
+}
+
+.htContextMenu tbody td {
+  padding: 8px 16px;
+  cursor: pointer;
+  color: #374151;
+}
+
+.htContextMenu tbody td:hover {
+  background-color: #f3f4f6;
+} 

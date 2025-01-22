@@ -5,13 +5,13 @@ export class OllamaAgent extends ContractAgent {
   constructor({ modelName }) {
     super({ modelName });
     this.modelName = modelName;
-    this.baseUrl = 'http://localhost:11434';
+    this.baseUrl = 'http://localhost:11434/api';
   }
 
   async initialize() {
     try {
       // 验证模型是否可用
-      const response = await fetch(`${this.baseUrl}/api/tags`);
+      const response = await fetch(`${this.baseUrl}/tags`);
       const data = await response.json();
       
       const isAvailable = data.models?.some(model => model.name === this.modelName);
@@ -20,7 +20,7 @@ export class OllamaAgent extends ContractAgent {
       }
 
       // 测试模型是否可以正常响应
-      const testResponse = await fetch(`${this.baseUrl}/api/generate`, {
+      const testResponse = await fetch(`${this.baseUrl}/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -45,35 +45,18 @@ export class OllamaAgent extends ContractAgent {
 
   async processFile(file) {
     try {
-      // 读取文件内容
-      const fileContent = await this._readFileContent(file);
+      // 1. 读取并解析表格内容
+      const tableData = await this._readFileContent(file);
       
-      // 使用 Ollama 的 generate API 处理文件内容
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.modelName,
-          prompt: `请分析以下文件内容并生成合同：\n\n${fileContent}`,
-          stream: false,
-          options: {
-            temperature: 0.7,
-            top_p: 0.9,
-          }
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`API request failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
+      // 2. 使用 LLM 解析表格数据为结构化信息
+      const structuredData = await this._parseTableData(tableData);
+      
+      // 3. 基于模板和结构化数据生成合同
+      const contract = await this._generateContractFromTemplate(structuredData);
       
       return {
         success: true,
-        contract: result.response
+        contract: contract
       };
     } catch (error) {
       console.error('Error processing file:', error);
@@ -84,6 +67,205 @@ export class OllamaAgent extends ContractAgent {
     }
   }
 
+  async _parseTableData(tableContent) {
+    const parsePrompt = `
+你是一个专业的采购合同分析助手。请分析以下采购订单表格内容，提取关键信息并按以下格式返回（请确保返回的是合法的 JSON 格式）：
+
+{
+  "基本信息": {
+    "合同编号": "",
+    "签订日期": "",
+    "交付期限": ""
+  },
+  "供应商信息": {
+    "供应商名称": "",
+    "供应商地址": "",
+    "联系人": ""
+  },
+  "采购物品信息": {
+    "物品名称": "",
+    "规格型号": "",
+    "数量": 0,
+    "单价": "",
+    "总金额": ""
+  },
+  "付款信息": {
+    "付款方式": "",
+    "付款条件": "",
+    "付款周期": ""
+  }
+}
+
+请仔细分析以下表格内容，将信息填入上述结构中（注意保持 JSON 格式的正确性）：
+
+${tableContent}`;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.modelName,
+          prompt: parsePrompt,
+          stream: false,
+          options: {
+            temperature: 0.1, // 降低温度以获得更确定的输出
+            top_p: 0.9,
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to parse table data');
+      }
+
+      const result = await response.json();
+      
+      // 尝试从响应中提取 JSON
+      const jsonMatch = result.response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No valid JSON found in response');
+      }
+
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        // 如果解析失败，返回一个基本结构
+        return {
+          基本信息: {},
+          供应商信息: {},
+          采购物品信息: {},
+          付款信息: {}
+        };
+      }
+    } catch (error) {
+      console.error('Error in _parseTableData:', error);
+      throw error;
+    }
+  }
+
+  async _generateContractFromTemplate(structuredData) {
+    const templatePrompt = `
+你是一个专业的采购合同生成助手。请使用以下结构化数据，生成一份正式的采购合同。合同应包含以下部分：
+
+1. 合同标题和编号
+2. 甲乙双方信息
+3. 采购内容和规格
+4. 合同金额和支付方式
+5. 交付条款
+6. 质量要求和验收标准
+7. 违约责任
+8. 其他条款
+9. 签署部分
+
+请确保：
+- 使用正式的法律语言
+- 条款清晰明确
+- 符合合同法规范
+- 保护双方权益
+- 包含必要的法律条款
+
+以下是结构化数据：
+${JSON.stringify(structuredData, null, 2)}
+
+请生成完整的合同文本：`;
+
+    const response = await fetch(`${this.baseUrl}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.modelName,
+        prompt: templatePrompt,
+        stream: false,
+        options: {
+          temperature: 0.7,
+          top_p: 0.9,
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to generate contract');
+    }
+
+    const result = await response.json();
+    return result.response;
+  }
+
+  async generateContract({ type, content }) {
+    try {
+      let prompt;
+      if (type === 'regenerate') {
+        prompt = `
+          请基于以下内容重新生成一份更规范的合同：
+          ${content}
+          
+          要求：
+          1. 保持原有的主要内容
+          2. 使用更规范的合同语言
+          3. 确保条款完整性
+          4. 改进格式和结构
+        `;
+      } else {
+        prompt = `请根据以下内容生成一份合同：${content}`;
+      }
+
+      const response = await fetch(`${this.baseUrl}/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.modelName,
+          prompt: prompt,
+          stream: false
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('生成失败');
+      }
+
+      const data = await response.json();
+      return data.response;
+
+    } catch (error) {
+      console.error('Generation error:', error);
+      throw error;
+    }
+  }
+
+  async _extractStructuredData(contractContent) {
+    const extractPrompt = `
+请从以下合同文本中提取关键信息，并以结构化的 JSON 格式返回。
+需要提取的信息包括：基本信息、供应商信息、采购物品信息、付款信息等。
+
+合同文本：
+${contractContent}`;
+
+    const response = await fetch(`${this.baseUrl}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.modelName,
+        prompt: extractPrompt,
+        stream: false,
+        options: {
+          temperature: 0.3,
+          top_p: 0.9,
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to extract structured data');
+    }
+
+    const result = await response.json();
+    return JSON.parse(result.response);
+  }
+
   // 添加文件读取方法
   async _readFileContent(file) {
     return new Promise((resolve, reject) => {
@@ -91,8 +273,9 @@ export class OllamaAgent extends ContractAgent {
       
       reader.onload = (event) => {
         try {
+          let content = '';
           if (file.name.endsWith('.csv')) {
-            resolve(event.target.result); // CSV 文件直接返回文本内容
+            content = event.target.result;
           } else {
             // 处理 Excel 文件
             const data = new Uint8Array(event.target.result);
@@ -101,17 +284,29 @@ export class OllamaAgent extends ContractAgent {
             // 获取第一个工作表
             const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
             
-            // 转换为 CSV 格式
-            const csvContent = XLSX.utils.sheet_to_csv(firstSheet);
-            resolve(csvContent);
+            // 转换为文本格式，保持表格结构
+            content = XLSX.utils.sheet_to_csv(firstSheet, { 
+              blankrows: false,
+              defval: '',
+              rawNumbers: true
+            });
           }
+
+          // 清理和格式化内容
+          content = content.trim()
+            .replace(/\r\n/g, '\n')
+            .replace(/,,+/g, ',')  // 移除多余的逗号
+            .replace(/\n,/g, '\n') // 移除行末逗号
+            .replace(/,\n/g, '\n'); // 移除行首逗号
+
+          resolve(content);
         } catch (error) {
-          reject(new Error('Failed to parse file content: ' + error.message));
+          reject(new Error(`解析文件失败: ${error.message}`));
         }
       };
 
       reader.onerror = () => {
-        reject(new Error('Failed to read file'));
+        reject(new Error('读取文件失败'));
       };
 
       if (file.name.endsWith('.csv')) {
@@ -122,105 +317,124 @@ export class OllamaAgent extends ContractAgent {
     });
   }
 
-  async generateContract(tableData) {
-    const prompt = this._generateContractPrompt(tableData);
-    return this._callModel(prompt);
-  }
-
-  async modifyContract(content, modification) {
-    const prompt = this._generateModificationPrompt(content, modification);
-    return this._callModel(prompt);
-  }
-
-  async analyzeContract(content) {
-    const prompt = this._generateAnalysisPrompt(content);
-    return this._callModel(prompt);
-  }
-
-  async _callModel(prompt) {
+  async modifyContract(content, suggestion) {
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const prompt = `
+        请根据以下建议修改合同内容：
+        
+        原合同内容：
+        ${content}
+        
+        修改建议：
+        ${suggestion}
+        
+        请提供修改后的完整合同内容。
+      `;
+
+      const response = await fetch(`${this.baseUrl}/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           model: this.modelName,
-          prompt,
-          stream: false,
-          options: {
-            temperature: 0.7,
-            top_p: 0.9,
-          }
+          prompt: prompt,
+          stream: false
         }),
       });
 
-      const result = await response.json();
-      return result.response;
+      if (!response.ok) {
+        throw new Error('修改失败');
+      }
+
+      const data = await response.json();
+      return {
+        success: true,
+        content: data.response
+      };
+
     } catch (error) {
-      throw new Error(`Model call failed: ${error.message}`);
+      console.error('Modification error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 
-  _generateContractPrompt(tableData) {
-    // 计算总金额
-    const totalAmount = tableData.reduce((sum, item) => sum + parseFloat(item['总金额'] || 0), 0);
+  async analyze(contractContent) {
+    try {
+      const prompt = `
+        请分析以下合同内容，重点关注：
+        1. 合同主要条款
+        2. 潜在风险点
+        3. 特殊条件和要求
+        4. 建议和改进意见
 
-    return `请根据以下采购订单数据生成一份完整的合同文本。
+        合同内容:
+        ${contractContent}
 
-订单数据：
-${JSON.stringify(tableData, null, 2)}
+        请提供详细的分析报告。
+      `;
 
-总金额：${totalAmount.toFixed(2)}元
+      const response = await fetch(`${this.baseUrl}/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.modelName,
+          prompt: prompt,
+          stream: false
+        }),
+      });
 
-要求：
-1. 生成正式的采购合同
-2. 包含以下内容：
-   - 合同编号（使用订单编号）
-   - 签订日期（使用订单日期）
-   - 甲方（采购方）信息
-   - 乙方（供应商）信息
-   - 详细的产品清单（包含数量、规格、单价、总价）
-   - 具体的付款条件和方式
-   - 交付要求和验收标准
-   - 质量保证条款
-   - 违约责任
-   - 争议解决方式
-3. 使用正式的法律用语
-4. 确保所有金额和数字的准确性
-5. 合同格式规范、结构清晰
+      if (!response.ok) {
+        throw new Error('分析失败');
+      }
 
-请直接生成合同内容，不需要解释说明。`;
-  }
+      const data = await response.json();
+      return data.response;
 
-  _generateModificationPrompt(content, modification) {
-    return `请根据以下修改建议修改合同内容：
-
-当前合同内容：
-${content}
-
-修改要求：
-${modification}
-
-请返回完整的修改后内容，保持合同格式规范。`;
-  }
-
-  _generateAnalysisPrompt(content) {
-    return `请分析以下合同内容，找出所有需要修改的地方（包括但不限于错别字、语法问题、逻辑问题、法律用语不规范等）：
-
-${content}
-
-请按以下格式返回分析结果：
-{
-  "type": "analysis",
-  "issues": [
-    {
-      "location": "问题位置描述",
-      "original": "原文内容",
-      "suggestion": "修改建议",
-      "reason": "修改原因"
+    } catch (error) {
+      console.error('Analysis error:', error);
+      throw error;
     }
-  ]
-}`;
+  }
+
+  async chat({ content, context }) {
+    try {
+      const prompt = `
+        基于以下合同内容回答问题:
+        ${context}
+
+        问题: ${content}
+
+        请提供专业、准确的回答。
+      `;
+
+      const response = await fetch(`${this.baseUrl}/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.modelName,
+          prompt: prompt,
+          stream: false
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('AI 响应失败');
+      }
+
+      const data = await response.json();
+      return data.response;
+
+    } catch (error) {
+      console.error('Chat error:', error);
+      throw error;
+    }
   }
 }
